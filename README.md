@@ -34,11 +34,11 @@ the lazy concatenation logic, the virtual reference store, and the file
 addressing. We want these things to be clean and separable and not
 bundled into one-way-is-the-right-way mantra.
 
-The **concat/placement** logic is the VRT a GDAL job expressed as
-logical slab offsets in XML, not a Python object graph. It’s
-inspectable, save-able, and we can open as-xarray with gdalxarray The
-**byte refs** are a *flat table* - (coord, addr, size, path) rows - so
-compute per-source, in parallel, with no shared state, and rbind. No
+The **concat/placement** logic is the VRT. A GDAL cli or Run job
+expressed as logical slab offsets in XML, not a Python object graph.
+It’s inspectable, save-able, and we can open as-xarray with gdalxarray
+The **byte refs** are a *flat table* - (coord, addr, size, path) rows -
+so compute per-source, in parallel, with no shared state, and rbind. No
 entanglement in a lazy python array of somethings. As rows, the mirai
 version is trivial: map -\> rows -\> rbind, no serializing live objects.
 The paths are two columns, `access`/`public` old-school “where’s the
@@ -46,6 +46,10 @@ file” and we can re-point with byte refs to either however we like. The
 table is queryable, the array indexing logic is implicit but robust (we
 need explicit refs and separation for true query pushdown, but that’s
 relatively simple).
+
+It’s a *table*, we can store anything with the refs - that could be a
+vector-driver-based meta-array-driver (like GTI), or a baked-in query
+scheme in whatever interface you like.
 
 ## Sources: `access` and `public`
 
