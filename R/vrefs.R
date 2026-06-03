@@ -56,7 +56,7 @@
 #'   and `coords` (named list with `dim`, `dtype`, `values`).
 #' @seealso [virtualize_mosaic()]
 #' @export
-#' @importFrom xml2 read_xml xml_find_first xml_find_all  xml_attr xml_text 
+#' @importFrom xml2 read_xml xml_find_first xml_find_all  xml_attr xml_text
 parse_mosaic_vrt <- function(vrt) {
   doc <- read_xml(vrt)
   g   <- xml_find_first(doc, ".//Group")
@@ -170,13 +170,13 @@ mosaic_sources <- function(public, access = public) {
   for (i in seq_len(H5Pget_nfilters(pid))) {
     f <- H5Pget_filter(pid, i); id <- f[[1L]]             # (id, name); no cd_values
     if (id == .H5Z[["deflate"]]) {
-      compressor <- list(id = "gzip", level = unbox(1L))  # Zarr-spec id (GDAL + numcodecs);
+      compressor <- list(id = unbox("gzip"), level = unbox(1L))  # Zarr-spec id (GDAL + numcodecs);
       # "zlib" is numcodecs-only. level decode-irrelevant.
     } else if (id == .H5Z[["shuffle"]]) {
-      filters[[length(filters) + 1L]] <- list(id = "shuffle",
+      filters[[length(filters) + 1L]] <- list(id = unbox("shuffle"),
                                               elementsize = unbox(as.integer(itemsize)))
     } else if (id == .H5Z[["fletcher32"]]) {
-      filters[[length(filters) + 1L]] <- list(id = "fletcher32")
+      filters[[length(filters) + 1L]] <- list(id = unbox("fletcher32"))
     } else stop("unsupported HDF5 filter id ", id, " (", f[[2L]], ")")
   }
   list(compressor = compressor, filters = if (length(filters)) filters else NULL,
@@ -213,7 +213,7 @@ mosaic_sources <- function(public, access = public) {
 #' @return A `data.frame`, one row per chunk: `ndim` integer coordinate columns
 #'   (`c1`..`cN`), `offset` (byte address), `size` (byte length), `path`.
 #' @export
-#' @importFrom rhdf5 H5Dget_storage_size 
+#' @importFrom rhdf5 H5Dget_storage_size
 scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous) {
   ndim <- length(A$shape)
   if (isTRUE(contiguous)) {
