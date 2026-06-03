@@ -1,16 +1,21 @@
 Package: vrefs
-Title: What the Package Does (One Line, Title Case)
+Title: Harvest Byte-References of Compressed Array Data Chunks Native to HDF5-Accessible Files, on Disk, on s3 storage or at urls. 
 Version: 0.0.0.9000
 Authors@R: 
     person("Michael", "Sumner", , "mdsumner@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-2471-7511"))
-Description: What the package does (one paragraph).
+Description: Generate byte-reference stores from chunked array storage. Array sources are logically mosaiced
+ with gdal multidimensional tool 'mdim mosaic' and this is used to extract and organize raw byte references (path, offset, size)
+ written to Parquet with manual semantic partitioning manually-sharded, positionally-indexed parquet reference store. The structure is a directory of parquet files, manually partitioned 
+ by variable (subdirectory) and by flat-chunk-index range ('refs.N.parq', 'record_size' rows each), with the partition keys 
+ implied positionally rather than stored as columns (i.e. _not_ hive-encoded). This is compatible with "kerchunk-parquet Zarr", and 
+ is used as an generic and intermediate convenience before generating 'icechunk' versions. 
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
 Remotes: mdsumner/rhdf5@remote-chunk-refs
-Depends: 
+Imports: 
     arrow,
     jsonlite,
     rhdf5,

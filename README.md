@@ -1,0 +1,172 @@
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# vrefs
+
+WIP: not really useable yet, there are quite a few issues with the Zarr
+metadata for instance, but the byte-ref extraction is fine if you are
+keen (relies on my fork of rhdf5).
+
+`vrefs` builds virtual Zarr **reference stores** from collections of
+NetCDF4/HDF5 files - without copying any data. It composes the files
+with GDAL’s `gdal mdim mosaic` to get the logical layout, then reads
+each chunk’s byte offset with rhdf5 to get the physical layout, and
+writes a kerchunk-Parquet store. The result is readable by VirtualiZarr,
+the GDAL Zarr driver, and any fsspec reference filesystem, and is the
+input to an Icechunk publish step.
+
+## How it works
+
+- **GDAL composes the logical array.** `gdal mdim mosaic` stitches many
+  files into one VRT: dimension order (C order), dtype, CF
+  `scale`/`offset`/`nodata`, composed coordinate values, and a
+  `source -> DestSlab` map saying which file supplies which slab. No
+  data is read when generating the VRT.
+- **rhdf5 supplies the physical layer.** For each source array,
+  `H5Dchunk_iter` walks the HDF5 chunk index and returns each chunk’s
+  byte address and length (metadata only - chunk data is never read).
+  The codec and storage chunk shape come from the creation property list
+  (`H5Pget_filter`, `H5Pget_chunk`).
+- **The store is kerchunk-Parquet.** A `.zmetadata` plus per-variable
+  `refs.<N>.parq` shards - fsspec’s `LazyReferenceMapper` layout, Zarr
+  v2. This *is* the portable sibling and the input to VirtualiZarr.
+
+## Sources: `access` and `public`
+
+A source file has two roles. `access` is the path that gets *opened* -
+handed to `gdal mdim mosaic` and opened by rhdf5 to scan - and is the
+join key back to the VRT. `public` is the durable URL *written into the
+references*; nothing opens it at build time. Because chunk byte offsets
+are identical in any byte-identical copy of a file, the two may differ:
+scan a cheap local/NFS path, reference a remote URL.
+
+``` r
+library(vrefs)
+
+urls <- sprintf(
+  "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/198109/oisst-avhrr-v02r01.1981%02d%02d.nc",
+  9, 1:10)
+nfs  <- sub("^https://www.ncei.noaa.gov/data/",
+            "/rdsi/PUBLIC/raad/data/www.ncei.noaa.gov/data/", urls)
+
+src <- mosaic_sources(public = urls, access = nfs)   # access = public for all-remote
+```
+
+## Example (OISST AVHRR daily)
+
+Note we’re inlining file paths to a ‘%s’ bash call, we probably want
+writeLines to file and ‘@filelist’ per `gdal mdim mosaic @filelist.txt`.
+
+``` r
+# 1. GDAL composes the logical manifest from the access paths
+system(sprintf("gdal mdim mosaic %s mosaic.vrt", paste(src$access, collapse = " ")))
+
+# 2. vrefs reads byte offsets and writes the reference store
+virtualize_mosaic("mosaic.vrt", "oisst.zarr", sources = src)
+
+# 3. GDAL reads it back as a Zarr datacube
+system("gdal mdim info ZARR:oisst.zarr")
+```
+
+``` r
+# the references: durable URLs + per-chunk byte address/length
+arrow::read_parquet("oisst.zarr/anom/refs.0.parq")
+#> # A tibble: n x 4
+#>   path                              offset  size   raw
+#>   <chr>                              <dbl> <dbl> <blob>
+#> 1 https://.../oisst-...19810901.nc   47747 684063  NA
+#> 2 https://.../oisst-...19810902.nc   47747 686733  NA
+```
+
+Then in Python, the same store feeds VirtualiZarr, xarray, and Icechunk:
+
+``` python
+from virtualizarr import open_virtual_dataset
+from virtualizarr.parsers import KerchunkParquetParser
+
+vds = open_virtual_dataset("oisst.zarr", parser=KerchunkParquetParser())
+# vds.vz.to_icechunk(store, config=ManifestSplittingConfig(...))   # split along time
+```
+
+## Notes
+
+- **Offsets are copy-invariant.** A chunk’s byte address is intrinsic to
+  the HDF5 layout, so you can scan any copy and still reference the
+  canonical URL.
+- **C order, everywhere.** `H5Pget_chunk` and `H5Dchunk_iter` return C
+  order; `h5ls()$dim` is *reversed* for R display (use `native = TRUE`
+  to keep C order). Mixing the two scrambles the chunk-index maths
+  silently.
+- **`gzip`, not `zlib`.** The Zarr-spec compressor id for DEFLATE is
+  `gzip`. GDAL accepts only spec ids; zarr-python/numcodecs also accept
+  `zlib`. Emit `gzip` and both readers work. Decompression ignores the
+  level, so it’s irrelevant.
+- **Codec homogeneity is a hard boundary.** A non-zero HDF5 filter mask
+  on any chunk, or a changed `scale`/`offset` across files, means the
+  span can’t be one Zarr array - the same constraint that splits long
+  satellite archives into eras.
+- **The VRT drops CF units.** `gdal mdim mosaic` carries coordinate
+  *values* but not all attributes (e.g. `time` loses `units`); read
+  those from a source file.
+- **Open read-only.** `h5default("H5F_ACC_RD")` is `"H5F_ACC_RDWR"` -
+  pass `flags = "H5F_ACC_RDONLY"` explicitly, or opens fail on read-only
+  mounts.
+- **parquet partitions** these files are numbered in ordinal manner, not
+  sorted.
+
+## What the store is, in Parquet terms
+
+A directory of independent Parquet files, manually **sharded** by
+variable (subdirectory) and by flat-chunk-index range (`refs.<N>.parq`,
+`record_size` rows each), with the partition keys implied
+**positionally** - `<var>` from the path, chunk index from
+`N * record_size + row` - not stored as columns or Hive-encoded. It is
+*not* an Arrow/Hive partitioned dataset; the index lives in the
+filesystem layout, the way Zarr keys do. Sharding bounds per-file size
+and enables lazy per-shard reads - the read-side dual of Icechunk
+manifest splitting.
+
+This is what 16344 netcdf files of OISST looks like on disk:
+
+``` bash
+du -d 1 -h oisst_test.zarr/
+8.0K    oisst_test.zarr/zlev
+264K    oisst_test.zarr/anom
+328K    oisst_test.zarr/sst
+12K     oisst_test.zarr/lon
+336K    oisst_test.zarr/ice
+12K     oisst_test.zarr/lat
+332K    oisst_test.zarr/err
+68K     oisst_test.zarr/time
+1.4M    oisst_test.zarr/
+
+
+Rscript -e "tibble::as_tibble(arrow::read_parquet('oisst_test.zarr/sst/refs.0.parq'))"
+# A tibble: 100,000 × 4
+   path                                                      offset   size   raw
+   <chr>                                                      <int>  <int> <arr>
+ 1 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1025881 683590
+ 2 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1031813 684863
+ 3 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1032012 683768
+ 4 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1035853 682292
+ 5 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1032925 681529
+ 6 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1029001 681074
+ 7 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1027366 680356
+ 8 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1028374 680184
+ 9 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1026568 679206
+10 https://www.ncei.noaa.gov/data/sea-surface-temperature-… 1029553 678224
+# ℹ 99,990 more rows
+```
+
+## what this could be
+
+A `gdal mdim index` application, there’s a pending draft PR but we also
+need the fast chunk iteration from HDF5 itself ported into GDAL. No
+aspirations for other formats.
+
+## Code of Conduct
+
+Please note that the vrefs project is released with a [Contributor Code
+of
+Conduct](https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html).
+By contributing to this project, you agree to abide by its terms.

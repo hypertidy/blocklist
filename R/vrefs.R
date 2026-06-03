@@ -39,6 +39,24 @@
 .H5Z <- c(deflate = 1L, shuffle = 2L, fletcher32 = 3L, szip = 4L)
 
 # ---- Parse the mosaic VRT (the logical manifest) ---------------------------
+
+#' Parse a GDAL multidimensional mosaic VRT
+#'
+#' Reads the logical manifest produced by `gdal mdim mosaic`: dimension sizes,
+#' and for each data array its C-order dimension names, dtype, shape, GDAL block
+#' size, CF `scale`/`offset`/`nodata`/`unit`, and the ordered list of sources
+#' (each with `SourceFilename`, `SourceArray`, and `DestSlab` offset).
+#' Coordinate arrays are returned with their composed values (from the VRT's
+#' `InlineValues` or `RegularlySpacedValues`). No data or chunk bytes are read.
+#'
+#' @param vrt Path to a `.vrt` written by `gdal mdim mosaic`.
+#' @return A list with `dim_size` (named integer vector of dimension extents),
+#'   `arrays` (named list of data-variable descriptions, each with `dim_names`,
+#'   `dtype`, `shape`, `chunks`, `scale`, `offset`, `nodata`, `unit`, `sources`),
+#'   and `coords` (named list with `dim`, `dtype`, `values`).
+#' @seealso [virtualize_mosaic()]
+#' @export
+#' @importFrom xml2 read_xml xml_find_first xml_find_all  xml_attr xml_text 
 parse_mosaic_vrt <- function(vrt) {
   doc <- read_xml(vrt)
   g   <- xml_find_first(doc, ".//Group")
@@ -96,6 +114,29 @@ parse_mosaic_vrt <- function(vrt) {
 #   public : the durable URL written into the refs (nothing opens it at build).
 # Offsets are copy-invariant, so access and public may differ freely: scan the
 # cheap local/NFS path, reference the URL. All-remote -> set both equal.
+
+#' Build a sources table for [virtualize_mosaic()]
+#'
+#' Pairs each source file's *access* path (what `gdal mdim mosaic` is given and
+#' what rhdf5 opens to scan) with its *public* URL (what is written into the
+#' reference store). Chunk byte offsets are identical in any byte-identical copy
+#' of a file, so the two may differ freely: scan a cheap local or NFS path while
+#' referencing a durable remote URL.
+#'
+#' @param public Character vector of durable URLs to record in the references
+#'   (e.g. `https://` or `s3://`), one per source file.
+#' @param access Character vector, same order as `public`, of the paths actually
+#'   opened during the build (handed to `gdal mdim mosaic` and opened by rhdf5).
+#'   Defaults to `public` for the all-remote case.
+#' @return A `data.frame` with columns `access` and `public`, one row per source.
+#' @seealso [virtualize_mosaic()]
+#' @examples
+#' \dontrun{
+#' mosaic_sources(
+#'   public = c("https://host/day01.nc", "https://host/day02.nc"),
+#'   access = c("/nfs/day01.nc",        "/nfs/day02.nc"))
+#' }
+#' @export
 mosaic_sources <- function(public, access = public) {
   data.frame(access = access, public = public, stringsAsFactors = FALSE)
 }
@@ -113,12 +154,14 @@ mosaic_sources <- function(public, access = public) {
 # shape comes from here (H5Pget_chunk), not the VRT BlockSize. scale/offset/
 # nodata already came from the VRT. Accepts an open file id or a path.
 # All calls are stock rhdf5; H5Dget_offset (contiguous branch) is the only gap.
+#' @importFrom rhdf5 H5Fopen H5Dopen H5Dget_create_plist H5Pclose H5Dclose H5Fclose H5Pget_filter H5Pget_layout H5Pget_chunk H5Pget_nfilters
+#' @importFrom jsonlite unbox
 .probe_codec <- function(fid_or_path, source_array, itemsize) {
   fid <- fid_or_path; opened <- FALSE
-  if (is.character(fid_or_path)) { fid <- H5Fopen(fid_or_path, flags = "H5F_ACC_RDONLY"); opened <- TRUE }
-  did <- H5Dopen(fid, source_array)
-  pid <- H5Dget_create_plist(did)
-  on.exit({ H5Pclose(pid); H5Dclose(did); if (opened) H5Fclose(fid) }, add = TRUE)
+  if (is.character(fid_or_path)) { fid <- rhdf5::H5Fopen(fid_or_path, flags = "H5F_ACC_RDONLY"); opened <- TRUE }
+  did <- rhdf5::H5Dopen(fid, source_array)
+  pid <- rhdf5::H5Dget_create_plist(did)
+  on.exit({ rhdf5::H5Pclose(pid); H5Dclose(did); if (opened) H5Fclose(fid) }, add = TRUE)
 
   contiguous <- !identical(H5Pget_layout(pid), "H5D_CHUNKED")
   chunks <- if (contiguous) NULL else H5Pget_chunk(pid)   # C order, authoritative
@@ -149,10 +192,33 @@ mosaic_sources <- function(public, access = public) {
 # Returns a data.frame: c1..c{d} (grid coords, 0-based, LOCAL) + offset(=addr) +
 # size + path(=ref_path). Caller shifts coords to global by DestSlab. Contiguous
 # sources have no B-tree -> one whole-array reference.
+
+#' Extract chunk byte references for one array in one source file
+#'
+#' Opens `source_array` in `scan_path` read-only and walks its HDF5 chunk index
+#' (`H5Dchunk_iter`) to recover, per chunk, the grid coordinate (C order) and
+#' the byte address and length of the stored, compressed data. Coordinates are
+#' local to the source; the caller shifts them to global position using the
+#' mosaic `DestSlab` offset. A non-zero filter mask on any chunk aborts with an
+#' error — it means the chunk does not share the array-level codec and cannot be
+#' virtualised uniformly.
+#'
+#' @param scan_path Path opened to read the chunk index (the source's `access`).
+#' @param source_array Array name within the file, e.g. `"/anom"`.
+#' @param ref_path Durable URL written into the `path` column (the `public` URL).
+#' @param A Array description from [parse_mosaic_vrt()] with at least `shape` and
+#'   `chunks` (C order); `chunks` must be the authoritative HDF5 storage chunk.
+#' @param contiguous Logical; if `TRUE` the dataset is unchunked and a single
+#'   whole-array reference is emitted instead of iterating a chunk index.
+#' @return A `data.frame`, one row per chunk: `ndim` integer coordinate columns
+#'   (`c1`..`cN`), `offset` (byte address), `size` (byte length), `path`.
+#' @export
+#' @importFrom rhdf5 H5Dget_storage_size 
 scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous) {
   ndim <- length(A$shape)
   if (isTRUE(contiguous)) {
     df <- as.data.frame(as.list(integer(ndim))); names(df) <- paste0("c", seq_len(ndim))
+    ## pseudo unused code
     df$offset <- H5Dget_offset_(scan_path, source_array)        # <- fork: byte addr
     df$size   <- H5Dget_storage_size(H5Dopen(H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"), source_array))
     df$path   <- ref_path
@@ -220,6 +286,29 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 }
 
 # ---- Write the kerchunk-Parquet store --------------------------------------
+
+#' Writes the fsspec `LazyReferenceMapper` layout (Zarr v2): a root `.zmetadata`
+#' holding consolidated array/group metadata plus `record_size`, and a
+#' `<var>/refs.<N>.parq` shard per array. Each row is either a chunk reference
+#' (`path`/`offset`/`size`) or inline data (`raw`); rows are placed at the
+#' C-order flat chunk index and padded to `record_size`. The result is readable
+#' by VirtualiZarr (`KerchunkParquetParser`), the GDAL Zarr driver, and any
+#' fsspec reference filesystem.
+#'
+#' @param root Output directory for the store (created, overwriting any existing).
+#' @param vars_meta Named list of per-variable metadata; each entry has `shape`,
+#'   `chunks`, `dtype`, `compressor`, `filters`, `fill_value`, `dim_names`,
+#'   `attrs`.
+#' @param ref_tables Named list (matching `vars_meta`) of chunk-reference
+#'   `data.frame`s from [scan_source_chunks()]; omit for variables given via
+#'   `inline`.
+#' @param inline Named list of variables stored inline; each entry has `raw`,
+#'   the bytes of a single whole-array chunk.
+#' @param record_size Integer chunk references per parquet shard (default 1e5).
+#' @param root_attrs Named list of group-level attributes for the root `.zattrs`.
+#' @return The store `root`, invisibly.
+#' @seealso [virtualize_mosaic()]
+#' @export
 write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
                                    inline = list(), record_size = 100000L,
                                    root_attrs = list()) {
@@ -277,12 +366,37 @@ write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
     }
   }
   zmeta <- list(metadata = metadata, record_size = unbox(as.integer(record_size)))
-  writeLines(toJSON(zmeta, auto_unbox = FALSE, null = "null", na = "null"),
+  writeLines(jsonlite::toJSON(zmeta, auto_unbox = FALSE, null = "null", na = "null"),
              file.path(root, ".zmetadata"))
   invisible(root)
 }
 
 # ---- Top-level driver: VRT -> kerchunk-Parquet -----------------------------
+
+#' Virtualise a GDAL mosaic into a kerchunk-Parquet reference store
+#'
+#' End-to-end driver. Parses a `gdal mdim mosaic` VRT for the logical layout,
+#' probes each array's codec and storage chunk shape once via rhdf5, scans every
+#' source file for chunk byte references, composes them across files using the
+#' VRT `DestSlab` offsets, inlines coordinate variables (values from the VRT, CF
+#' attributes read from a source), and writes the store. The output is both a
+#' portable reference store and the input to a VirtualiZarr -> Icechunk step.
+#'
+#' @param vrt Path to a VRT written by `gdal mdim mosaic` over `sources$access`.
+#' @param root Output directory for the store.
+#' @param sources A `data.frame` with columns `access` and `public`, typically
+#'   from [mosaic_sources()]. Joined to the VRT by `access` (the
+#'   `SourceFilename`), with a basename fallback.
+#' @param record_size Integer chunk references per parquet shard (default 1e5).
+#' @return The store `root`, invisibly.
+#' @seealso [mosaic_sources()], [parse_mosaic_vrt()], [write_kerchunk_parquet()]
+#' @examples
+#' \dontrun{
+#' src <- mosaic_sources(public = urls, access = nfs_paths)
+#' system(sprintf("gdal mdim mosaic %s mosaic.vrt", paste(src$access, collapse = " ")))
+#' virtualize_mosaic("mosaic.vrt", "oisst.zarr", sources = src)
+#' }
+#' @export
 virtualize_mosaic <- function(vrt, root, sources, record_size = 100000L) {
   stopifnot(all(c("access", "public") %in% names(sources)))
   m <- parse_mosaic_vrt(vrt)
