@@ -184,7 +184,7 @@ mosaic_sources <- function(public, access = public) {
 }
 
 # ---- Per-source chunk scan (physical byte refs) ----------------------------
-# Wraps your fork's H5Dchunk_iter, whose return is:
+# Wraps fork's H5Dchunk_iter, whose return is:
 #   $offset      n_chunks x ndim matrix of chunk-grid coords (element units, C order)
 #   $addr        byte address of each chunk in the file
 #   $size        compressed byte length of each chunk
@@ -227,7 +227,7 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 
   fid <- H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"); did <- H5Dopen(fid, source_array)
   on.exit({ H5Dclose(did); H5Fclose(fid) }, add = TRUE)
-  ck <- rhdf5::H5Dchunk_iter(did)                               # <- your fork
+  ck <- rhdf5:::H5Dchunk_iter(did)                       
 
   # $offset: element-unit grid coords -> chunk-grid indices (divide by chunk shape)
   coords <- ck$offset
