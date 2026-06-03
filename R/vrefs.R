@@ -10,11 +10,11 @@
 # values, and the source->DestSlab mapping. rhdf5 supplies only what the VRT
 # cannot: per-chunk byte offset/length and the filter pipeline.
 #
-# Path model: each VRT SourceFilename maps to a remote URL (source_to_url), used
-# for BOTH the rhdf5 scan (ros3 over https) and the reference written into the
-# store. Offsets are intrinsic to the file, so the URL is the canonical location
-# a consumer fetches from. (rhdf5 can't open the NFS mirror, but reads https
-# fine; that NFS limitation is rhdf5's to fix, not this wrapper's.)
+# Path model: a sources data.frame(access, public). $access is BOTH the mosaic
+# input and the path rhdf5 opens to scan (one physical-access role), and the join
+# key back to the VRT (GDAL echoes it verbatim as SourceFilename). $public is the
+# durable URL written into the refs. Offsets are copy-invariant, so $access and
+# $public may differ (scan the cheap NFS/local path, reference the URL).
 #
 # kerchunk-Parquet contract (validated against fsspec's own writer):
 #   <root>/.zmetadata          {"metadata": {<zkey>: <object>}, "record_size": N}
@@ -89,20 +89,23 @@ parse_mosaic_vrt <- function(vrt) {
 .num_or_null <- function(x) if (length(x) && nzchar(x)) as.numeric(x) else NULL
 .chr_or_null <- function(x) if (length(x) && nzchar(x)) x else NULL
 
-# ---- SourceFilename -> remote URL (the one path mapping) -------------------
-# The raad/bowerbird mirror tree mirrors host/path, so this is a prefix swap.
-# Used for BOTH scanning (rhdf5 reads the URL via ros3) and the written
-# reference. Refuses anything that doesn't resolve to a URL -- a non-resolvable
-# `path` passes `mdim info` but fails at first chunk read.
-source_to_url <- function(path,
-                          mirror_prefix = normalizePath(".local_temp/"),
-                          url_scheme = "https://") {
-  out <- if (grepl("^[a-z][a-z0-9+.-]*://", path)) path        # already a URL
-  else sub(paste0("^", mirror_prefix), url_scheme, path)
-  if (!grepl("^[a-z][a-z0-9+.-]*://", out))
-    stop("source_to_url() did not produce a URL (got '", out, "'); ",
-         "check mirror_prefix against the VRT SourceFilename.")
-  out
+# ---- Two-column source model -----------------------------------------------
+# sources: data.frame(access, public).
+#   access : the path handed to `gdal mdim mosaic` AND opened by rhdf5 to scan --
+#            one physical-access role. == VRT SourceFilename == JOIN KEY.
+#   public : the durable URL written into the refs (nothing opens it at build).
+# Offsets are copy-invariant, so access and public may differ freely: scan the
+# cheap local/NFS path, reference the URL. All-remote -> set both equal.
+mosaic_sources <- function(public, access = public) {
+  data.frame(access = access, public = public, stringsAsFactors = FALSE)
+}
+
+# Join a VRT SourceFilename back to its row (exact on $access, basename fallback).
+.match_source <- function(source_filename, sources) {
+  i <- match(source_filename, sources$access)
+  if (is.na(i)) i <- match(basename(source_filename), basename(sources$access))
+  if (is.na(i)) stop("VRT SourceFilename not in sources$access: ", source_filename)
+  sources[i, , drop = FALSE]
 }
 
 # ---- One-time per-array probe: codec + layout + chunk shape (NOT in VRT) ----
@@ -112,7 +115,7 @@ source_to_url <- function(path,
 # All calls are stock rhdf5; H5Dget_offset (contiguous branch) is the only gap.
 .probe_codec <- function(fid_or_path, source_array, itemsize) {
   fid <- fid_or_path; opened <- FALSE
-  if (is.character(fid_or_path)) { fid <- H5Fopen(fid_or_path); opened <- TRUE }
+  if (is.character(fid_or_path)) { fid <- H5Fopen(fid_or_path, flags = "H5F_ACC_RDONLY"); opened <- TRUE }
   did <- H5Dopen(fid, source_array)
   pid <- H5Dget_create_plist(did)
   on.exit({ H5Pclose(pid); H5Dclose(did); if (opened) H5Fclose(fid) }, add = TRUE)
@@ -151,12 +154,12 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
   if (isTRUE(contiguous)) {
     df <- as.data.frame(as.list(integer(ndim))); names(df) <- paste0("c", seq_len(ndim))
     df$offset <- H5Dget_offset_(scan_path, source_array)        # <- fork: byte addr
-    df$size   <- H5Dget_storage_size(H5Dopen(H5Fopen(scan_path), source_array))
+    df$size   <- H5Dget_storage_size(H5Dopen(H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"), source_array))
     df$path   <- ref_path
     return(df)
   }
 
-  fid <- H5Fopen(scan_path); did <- H5Dopen(fid, source_array)
+  fid <- H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"); did <- H5Dopen(fid, source_array)
   on.exit({ H5Dclose(did); H5Fclose(fid) }, add = TRUE)
   ck <- rhdf5::H5Dchunk_iter(did)                               # <- your fork
 
@@ -280,25 +283,28 @@ write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
 }
 
 # ---- Top-level driver: VRT -> kerchunk-Parquet -----------------------------
-virtualize_mosaic <- function(vrt, root,
-                              url_fn = source_to_url,   # SourceFilename -> remote URL
-                              record_size = 100000L) {
+virtualize_mosaic <- function(vrt, root, sources, record_size = 100000L) {
+  stopifnot(all(c("access", "public") %in% names(sources)))
   m <- parse_mosaic_vrt(vrt)
   vars_meta <- list(); ref_tables <- list(); inline <- list()
+
+  # representative access path (first source of first array) for probe + coords;
+  # the rep file holds every array/coord, opened read-only.
+  rep_access <- .match_source(m$arrays[[1]]$sources[[1]]$filename, sources)$access
 
   # data variables: byte refs placed by DestSlab; codec probed once per array
   for (nm in names(m$arrays)) {
     A <- m$arrays[[nm]]
     itemsize <- as.integer(sub("^.{2}", "", A$dtype))
-    zc <- .probe_codec(A$sources[[1]]$filename, A$sources[[1]]$array, itemsize)
+    zc <- .probe_codec(rep_access, A$sources[[1]]$array, itemsize)
     # authoritative chunk shape is the HDF5 storage chunk, not the VRT BlockSize
     A$chunks <- if (zc$contiguous) A$shape else zc$chunks
 
     parts <- list()
     for (s in A$sources) {
-      url <- url_fn(s$filename)                          # scan + reference are the same
-      ci <- scan_source_chunks(s$filename, s$array, url, A, zc$contiguous)
-      shift <- s$dest %/% A$chunks                       # local -> global chunk coord
+      row <- .match_source(s$filename, sources)          # join by $access
+      ci  <- scan_source_chunks(row$access, s$array, row$public, A, zc$contiguous)
+      shift <- s$dest %/% A$chunks                        # local -> global chunk coord
       for (d in seq_along(A$chunks)) ci[[d]] <- ci[[d]] + shift[d]
       parts[[length(parts) + 1L]] <- ci
     }
@@ -309,11 +315,10 @@ virtualize_mosaic <- function(vrt, root,
                             attrs = .compose_data_attrs(A))
   }
 
-  # coordinates: values from the VRT (already composed), attrs from a source
-  rep_src <- m$arrays[[1]]$sources[[1]]$filename
+  # coordinates: values from the VRT (already composed), attrs from the rep file
   for (nm in names(m$coords)) {
     C <- m$coords[[nm]]
-    attrs <- c(list("_ARRAY_DIMENSIONS" = C$dim), .read_coord_attrs(rep_src, nm))
+    attrs <- c(list("_ARRAY_DIMENSIONS" = C$dim), .read_coord_attrs(rep_access, nm))
     vars_meta[[nm]] <- list(shape = length(C$values), chunks = length(C$values),
                             dtype = C$dtype, compressor = NULL, filters = NULL,
                             fill_value = NULL, dim_names = C$dim, attrs = attrs)
@@ -325,11 +330,11 @@ virtualize_mosaic <- function(vrt, root,
 }
 
 # -----------------------------------------------------------------------------
-# system("gdal mdim mosaic <oisst .nc files> mosaic.vrt")
-# virtualize_mosaic("mosaic.vrt", "oisst_test.zarr")
-#   # url_fn defaults to source_to_url (raad mirror prefix -> https). Override
-#   # url_fn for other mirrors / an s3:// endpoint. SourceFilename is resolved
-#   # against the VRT dir first, so relative GDAL paths still map correctly.
+# src <- mosaic_sources(public = c("https://.../day01.nc", ...),
+#                       access = c("/nfsmount/.../day01.nc", ...))  # access=public if remote
+# system(sprintf("gdal mdim mosaic %s mosaic.vrt", paste(src$access, collapse = " ")))
+# virtualize_mosaic("mosaic.vrt", "oisst_test.zarr", sources = src)
+#   # VRT SourceFilename joins back to src$access; $public lands in the refs.
 # Then Python:
 #   from virtualizarr import open_virtual_dataset
 #   from virtualizarr.parsers import KerchunkParquetParser

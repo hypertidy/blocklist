@@ -10,7 +10,7 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
 Remotes: mdsumner/rhdf5@remote-chunk-refs
-Imports: 
+Depends: 
     arrow,
     jsonlite,
     rhdf5,

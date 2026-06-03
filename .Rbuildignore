@@ -3,3 +3,6 @@
 ^\.positai$
 ^\.claude$
 ^LICENSE\.md$
+^filelist.txt$
+^mosaic.vrt$
+^.*\\.zarr$
