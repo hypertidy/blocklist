@@ -13,16 +13,9 @@ knitr::opts_chunk$set(
 )
 ```
 
-
-
-
-
-
 # vrefs
 
-WIP: not really useable yet, there are quite a few issues with the Zarr metadata
-for instance, but the byte-ref extraction is fine if you are keen (relies on my 
-fork of rhdf5). 
+
 
 `vrefs` builds virtual Zarr **reference stores** from collections of
 NetCDF4/HDF5 files - without copying any data. It composes the files with GDAL's
@@ -44,6 +37,15 @@ fsspec reference filesystem, and is the input to an Icechunk publish step.
 - **The store is kerchunk-Parquet.** A `.zmetadata` plus per-variable
   `refs.<N>.parq` shards - fsspec's `LazyReferenceMapper` layout, Zarr v2. This
   *is* the portable sibling and the input to VirtualiZarr.
+
+## What the heck?
+
+Motivation: VirtualiZarr fuses three things into one in-memory object: the lazy concatenation logic, the virtual reference store, and the file addressing. We want these things to be clean and separable and not bundled into one-way-is-the-right-way mantra. 
+
+The **concat/placement** logic is the VRT a GDAL job expressed as logical slab offsets in XML, not a Python object graph. It's inspectable, save-able, and we can open as-xarray with gdalxarray 
+The **byte refs** are a *flat table* - (coord, addr, size, path) rows - so compute per-source, in parallel, with no shared state, and rbind. No entanglement in a lazy python array of somethings. 
+As rows, the mirai version is trivial: map -> rows -> rbind, no serializing live objects.
+The paths are two columns, `access`/`public`  old-school "where's the file" and we can re-point with byte refs to either however we like. The table is queryable, the array indexing logic is implicit but robust (we need explicit refs and separation for true query pushdown, but that's relatively simple). 
 
 ## Sources: `access` and `public`
 
