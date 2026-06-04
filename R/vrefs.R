@@ -29,7 +29,7 @@
   w <- getOption("vrefs.workers", 0L)
   if (w < 1L || !requireNamespace("mirai", quietly = TRUE)) return(lapply(x, f))
   mirai::daemons(w)                       # spin up w background R processes
-  print(sprintf("daemons: %i", as.integer(i)))
+  print(sprintf("daemons: %i", as.integer(w)))
   on.exit(mirai::daemons(0L), add = TRUE) # tear down
   mirai::mirai_map(x, f)[]                # [] collects, preserves order
 }
