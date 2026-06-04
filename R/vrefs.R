@@ -26,7 +26,8 @@
 
 # default serial; set options(vrefs.workers = N) to fan out over mirai daemons
 .vmap <- function(x, f) {
-  w <- getOption("vrefs.workers", 0L)
+  w <- as.integer(getOption("vrefs.workers", 0L))
+  if (is.na(w)) w <- 1L
   if (w < 1L || !requireNamespace("mirai", quietly = TRUE)) return(lapply(x, f))
   mirai::daemons(w)                       # spin up w background R processes
   print(sprintf("daemons: %i", as.integer(w)))
