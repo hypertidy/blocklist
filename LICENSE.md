@@ -1,6 +1,6 @@
 # MIT License
 
-Copyright (c) 2026 vrefs authors
+Copyright (c) 2026 blocklist authors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

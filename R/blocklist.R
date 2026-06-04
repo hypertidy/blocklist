@@ -1,4 +1,4 @@
-# h5refs.R — GDAL-first virtualization wrapper
+# GDAL-first virtualization wrapper
 # -----------------------------------------------------------------------------
 # Pipeline:  GDAL (mdim mosaic -> logical manifest)
 #         -> R/rhdf5 (physical byte refs; stand-in for VirtualiZarr until
@@ -24,16 +24,16 @@
 # -----------------------------------------------------------------------------
 
 
-# default serial; set options(vrefs.workers = N) to fan out over mirai daemons
+# default serial; set options(blocklist.workers = N) to fan out over mirai daemons
 .vmap <- function(x, f) {
-  w <- as.integer(getOption("vrefs.workers", 0L))
+  w <- as.integer(getOption("blocklist.workers", 0L))
   if (is.na(w)) w <- 1L
   if (w < 1L || !requireNamespace("mirai", quietly = TRUE)) return(lapply(x, f))
   mirai::daemons(w)                       # spin up w background R processes
   mirai::everywhere({
-    .libPaths(Sys.getenv("VREFS_LIB", "~/lib"))
-    library(vrefs)
-    library(rhdf5)
+    .libPaths(Sys.getenv("BLOCKLIST_LIB", "~/lib"))
+    requireNamespace("blocklist")
+    requireNamespace("rhdf5")
   })
   print(sprintf("daemons: %i", as.integer(w)))
   on.exit(mirai::daemons(0L), add = TRUE) # tear down
@@ -73,6 +73,7 @@
 #'   and `coords` (named list with `dim`, `dtype`, `values`).
 #' @seealso [virtualize_mosaic()]
 #' @export
+#' @importFrom stats setNames
 #' @importFrom xml2 read_xml xml_find_first xml_find_all  xml_attr xml_text
 parse_mosaic_vrt <- function(vrt) {
   doc <- read_xml(vrt)
@@ -217,7 +218,7 @@ mosaic_sources <- function(public, access = public) {
 #' the byte address and length of the stored, compressed data. Coordinates are
 #' local to the source; the caller shifts them to global position using the
 #' mosaic `DestSlab` offset. A non-zero filter mask on any chunk aborts with an
-#' error — it means the chunk does not share the array-level codec and cannot be
+#' error - it means the chunk does not share the array-level codec and cannot be
 #' virtualised uniformly.
 #'
 #' @param scan_path Path opened to read the chunk index (the source's `access`).
@@ -234,12 +235,13 @@ mosaic_sources <- function(public, access = public) {
 scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous) {
   ndim <- length(A$shape)
   if (isTRUE(contiguous)) {
-    df <- as.data.frame(as.list(integer(ndim))); names(df) <- paste0("c", seq_len(ndim))
+    stop("contiguous storage not yet supported")
+    #df <- as.data.frame(as.list(integer(ndim))); names(df) <- paste0("c", seq_len(ndim))
     ## pseudo unused code
-    df$offset <- H5Dget_offset_(scan_path, source_array)        # <- fork: byte addr
-    df$size   <- H5Dget_storage_size(H5Dopen(H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"), source_array))
-    df$path   <- ref_path
-    return(df)
+    #df$offset <- H5Dget_offset_(scan_path, source_array)        # <- fork: byte addr
+    #df$size   <- H5Dget_storage_size(H5Dopen(H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"), source_array))
+    #df$path   <- ref_path
+    #return(df)
   }
 
   fid <- H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"); did <- H5Dopen(fid, source_array)
@@ -254,7 +256,7 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 
   bad <- which(ck$filter_mask != 0L)
   if (length(bad)) stop(sprintf(
-    "%s @ %s: %d chunk(s) with nonzero filter_mask — codec not uniform; ",
+    "%s @ %s: %d chunk(s) with nonzero filter_mask - codec not uniform; ",
     source_array, scan_path, length(bad)),
     "this source cannot share the array-level codec (the GOES-Shuffle hazard).")
 

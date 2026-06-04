@@ -1,15 +1,17 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-# vrefs
+# blocklist
 
-`vrefs` builds virtual Zarr **reference stores** from collections of
-NetCDF4/HDF5 files - without copying any data. It composes the files
-with GDAL’s `gdal mdim mosaic` to get the logical layout, then reads
-each chunk’s byte offset with rhdf5 to get the physical layout, and
-writes a kerchunk-Parquet store. The result is readable by VirtualiZarr,
-the GDAL Zarr driver, and any fsspec reference filesystem, and is the
-input to an Icechunk publish step.
+`blocklist` builds virtual **reference stores** from collections of
+NetCDF4/HDF5 files - references record where a block (or chunk) of array
+data starts and ends within a file. It composes the files with GDAL’s
+`gdal mdim mosaic` to get the logical layout, then reads each chunk’s
+byte offset with rhdf5 to get the physical layout, and writes a
+kerchunk-Parquet store. The result is readable by xarray, the GDAL Zarr
+driver, and is intended as an intermiediate input to an Icechunk publish
+step. Intermediate steps is a primary motivation of this project,
+enabling broader software language support and options for use.
 
 ## How it works
 
@@ -61,7 +63,7 @@ are identical in any byte-identical copy of a file, the two may differ:
 scan a cheap local/NFS path, reference a remote URL.
 
 ``` r
-library(vrefs)
+library(blocklist)
 
 urls <- sprintf(
   "https://www.ncei.noaa.gov/data/sea-surface-temperature-optimum-interpolation/v2.1/access/avhrr/198109/oisst-avhrr-v02r01.1981%02d%02d.nc",
@@ -81,7 +83,7 @@ writeLines to file and ‘@filelist’ per `gdal mdim mosaic @filelist.txt`.
 # 1. GDAL composes the logical manifest from the access paths
 system(sprintf("gdal mdim mosaic %s mosaic.vrt", paste(src$access, collapse = " ")))
 
-# 2. vrefs reads byte offsets and writes the reference store
+# 2. blocklist reads byte offsets and writes the reference store
 virtualize_mosaic("mosaic.vrt", "oisst.zarr", sources = src)
 
 # 3. GDAL reads it back as a Zarr datacube
@@ -186,7 +188,7 @@ aspirations for other formats.
 
 ## Code of Conduct
 
-Please note that the vrefs project is released with a [Contributor Code
-of
+Please note that the blocklist project is released with a [Contributor
+Code of
 Conduct](https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html).
 By contributing to this project, you agree to abide by its terms.

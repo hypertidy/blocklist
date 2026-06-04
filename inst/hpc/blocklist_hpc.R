@@ -1,5 +1,5 @@
-## vrefs_hpc.R -- timing/debugging helpers for running vrefs on NCI/Pawsey.
-## source("https://raw.githubusercontent.com/mdsumner/vrefs/main/inst/hpc/vrefs_hpc.R")
+## blocklist_hpc.R -- timing/debugging helpers for running blocklist on NCI/Pawsey.
+## source("https://raw.githubusercontent.com/hypertidy/blocklist/main/inst/hpc/blocklist_hpc.R")
 ## Each helper times a single layer so a slow run points at a stage, not a wall.
 ##
 ## Layers (slowest-suspect first):
@@ -8,10 +8,6 @@
 ##   3. full scan of ONE file           -> run_one()
 ##   4. scan of N files                 -> run_n()
 ##   5. whole pipeline (mosaic+write)   -> run_all()
-
-suppressMessages({
-  library(vrefs, lib.loc = Sys.getenv("VREFS_LIB", "~/lib"))
-})
 
 ## ---- source table ----------------------------------------------------------
 ## Default = BRAN ocean_temp on NCI /g/data; override dir/var/url for elsewhere.
@@ -37,7 +33,7 @@ check_access <- function(path) {
 }
 
 ## ---- 1. raw chunk-index walk on one array (the latency test) ---------------
-## This is the 0.11s (local) vs 101s (remote) measurement, isolated from vrefs.
+## This is the 0.11s (local) vs 101s (remote) measurement, isolated from blocklist.
 .time_iter <- function(path, array = "/temp") {
   check_access(path)
   fid <- rhdf5::H5Fopen(path, flags = "H5F_ACC_RDONLY")
@@ -55,7 +51,7 @@ check_access <- function(path) {
 
 ## ---- 2. codec probe on one file (one open, header only) --------------------
 .time_probe <- function(path, array = "/temp") {
-  tt <- system.time(zc <- vrefs:::.probe_codec(path, array, itemsize = 2L))
+  tt <- system.time(zc <- blocklist:::.probe_codec(path, array, itemsize = 2L))
   message(sprintf("[probe] %s | %.2fs | contiguous=%s chunks=%s",
                   basename(path), tt["elapsed"], zc$contiguous,
                   paste(zc$chunks, collapse = ",")))

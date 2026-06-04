@@ -1,4 +1,4 @@
-^vrefs\.Rproj$
+^.*\.Rproj$
 ^\.Rproj\.user$
 ^\.positai$
 ^\.claude$
@@ -8,3 +8,7 @@
 ^.*\\.zarr$
 ^README\.Rmd$
 ^CODE_OF_CONDUCT\.md$
+^\.github$
+^_pkgdown\.yml$
+^docs$
+^pkgdown$
