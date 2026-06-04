@@ -1,9 +1,9 @@
-## vrefs-hpc.R — timing/debugging helpers for running vrefs on NCI/Pawsey.
-## source("https://raw.githubusercontent.com/mdsumner/vrefs/main/inst/vrefs-hpc.R")
+## vrefs_hpc.R -- timing/debugging helpers for running vrefs on NCI/Pawsey.
+## source("https://raw.githubusercontent.com/mdsumner/vrefs/main/inst/hpc/vrefs_hpc.R")
 ## Each helper times a single layer so a slow run points at a stage, not a wall.
 ##
 ## Layers (slowest-suspect first):
-##   1. raw H5Dchunk_iter on ONE array  -> .time_iter()      (the 0.11s vs 101s test)
+##   1. raw H5Dchunk_iter on ONE array  -> .time_iter()   (the 0.11s vs 101s test)
 ##   2. codec probe on ONE file         -> .time_probe()
 ##   3. full scan of ONE file           -> run_one()
 ##   4. scan of N files                 -> run_n()
@@ -14,11 +14,11 @@ suppressMessages({
 })
 
 ## ---- source table ----------------------------------------------------------
-## Default = BRAN ocean_temp on NCI /g/data; override dir/var/host for elsewhere.
+## Default = BRAN ocean_temp on NCI /g/data; override dir/var/url for elsewhere.
 bran_sources <- function(
-    dir  = "/g/data/gb6/BRAN/BRAN2023/daily",
-    var  = "ocean_temp",
-    url  = "https://thredds.nci.org.au/thredds/fileServer/gb6/BRAN/BRAN2023/daily/") {
+    dir = "/g/data/gb6/BRAN/BRAN2023/daily",
+    var = "ocean_temp",
+    url = "https://thredds.nci.org.au/thredds/fileServer/gb6/BRAN/BRAN2023/daily/") {
   access <- sort(fs::dir_ls(dir, regexp = sprintf("%s.*nc$", var)))
   tibble::tibble(access = as.character(access),
                  public = gsub(paste0(dir, "/"), url, access, fixed = TRUE))
@@ -42,7 +42,8 @@ check_access <- function(path) {
   check_access(path)
   fid <- rhdf5::H5Fopen(path, flags = "H5F_ACC_RDONLY")
   on.exit(rhdf5::H5Fclose(fid), add = TRUE)
-  did <- rhdf5::H5Dopen(fid, array); on.exit(rhdf5::H5Dclose(did), add = TRUE)
+  did <- rhdf5::H5Dopen(fid, array)
+  on.exit(rhdf5::H5Dclose(did), add = TRUE)
   tt <- system.time(hf <- rhdf5:::H5Dchunk_iter(did))
   n  <- if (is.null(dim(hf$offset))) 1L else nrow(hf$offset)
   message(sprintf("[iter] %s %s | %d chunks | %.2fs elapsed (%.4fs cpu)",
@@ -62,19 +63,46 @@ check_access <- function(path) {
 }
 
 ## ---- helper: build the mosaic VRT from a source table ----------------------
-
-build_vrt <- function(src, vrt = tempfile(fileext = ".vrt"), filelist = tempfile(fileext = ".txt")) {## ---- 3. one file end to end ------------------------------------------------ 
-  writeLines(src$access, filelist) # one access path per line
-  run_one <- function(src = bran_sources(), i = 1L, tt <- system.time( out = file.path(tempdir(), "one.zarr"), array = "/temp") { s1 <- 
-  src[i, , drop = FALSE] check_access(s1$access) .time_iter(s1$access, array) vrt <- build_vrt(s1) tt <- system.time(virtualize_mosaic(vrt, out, sources = s1)) message(sprintf("[run_one] %s -> %s | 
-  %.2fs total", basename(s1$access), out, tt["elapsed"])) invisible(out)
-    st <- system2("gdal", c("mdim", "mosaic", paste0("@", filelist), vrt),} stdout = TRUE, stderr = TRUE)) status <- attr(st, "status")## ---- 4. n files 
-  ------------------------------------------------------------ if (!is.null(status) && status != 0)run_n <- function(src = bran_sources(), n = 10L,
-    stop("gdal mdim mosaic failed (status ", status, "):\n", paste(st, collapse = "\n")) out = file.path(tempdir(), "n.zarr")) { sn <- src[seq_len(min(n, nrow(src))), , drop = FALSE] vrt <- 
-  build_vrt(sn) tt <- system.time(virtualize_mosaic(vrt, out, sources = sn)) message(sprintf("[run_n] %d files -> %s | %.2fs total (%.2fs/file)", message(sprintf("[mosaic] %d sources -> %s | %.2fs 
-  (filelist %s)", nrow(sn), out, tt["elapsed"], tt["elapsed"] / nrow(sn))) invisible(out)
-                  nrow(src), vrt, tt["elapsed"], filelist))} vrt
+## Writes one access path per line and passes it via gdal's @filelist
+## indirection, so the command line never hits an argument-length limit.
+build_vrt <- function(src, vrt = tempfile(fileext = ".vrt"),
+                      filelist = tempfile(fileext = ".txt")) {
+  writeLines(src$access, filelist)                 # one access path per line
+  tt <- system.time(
+    st <- system2("gdal", c("mdim", "mosaic", paste0("@", filelist), vrt),
+                  stdout = TRUE, stderr = TRUE))
+  status <- attr(st, "status")
+  if (!is.null(status) && status != 0)
+    stop("gdal mdim mosaic failed (status ", status, "):\n", paste(st, collapse = "\n"))
+  message(sprintf("[mosaic] %d sources -> %s | %.2fs (filelist %s)",
+                  nrow(src), vrt, tt["elapsed"], filelist))
+  vrt
 }
+
+## ---- 3. one file end to end ------------------------------------------------
+run_one <- function(src = bran_sources(), i = 1L,
+                    out = file.path(tempdir(), "one.zarr"), array = "/temp") {
+  s1 <- src[i, , drop = FALSE]
+  check_access(s1$access)
+  .time_iter(s1$access, array)
+  vrt <- build_vrt(s1)
+  tt <- system.time(virtualize_mosaic(vrt, out, sources = s1))
+  message(sprintf("[run_one] %s -> %s | %.2fs total",
+                  basename(s1$access), out, tt["elapsed"]))
+  invisible(out)
+}
+
+## ---- 4. n files ------------------------------------------------------------
+run_n <- function(src = bran_sources(), n = 10L,
+                  out = file.path(tempdir(), "n.zarr")) {
+  sn <- src[seq_len(min(n, nrow(src))), , drop = FALSE]
+  vrt <- build_vrt(sn)
+  tt <- system.time(virtualize_mosaic(vrt, out, sources = sn))
+  message(sprintf("[run_n] %d files -> %s | %.2fs total (%.2fs/file)",
+                  nrow(sn), out, tt["elapsed"], tt["elapsed"] / nrow(sn)))
+  invisible(out)
+}
+
 ## ---- 5. whole thing (explicit paths, for qsub) -----------------------------
 run_all <- function(out, src = bran_sources(), vrt = tempfile(fileext = ".vrt")) {
   message(sprintf("[run_all] %d sources -> %s", nrow(src), out))
