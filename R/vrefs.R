@@ -24,6 +24,16 @@
 # -----------------------------------------------------------------------------
 
 
+# default serial; set options(vrefs.workers = N) to fan out over mirai daemons
+.vmap <- function(x, f) {
+  w <- getOption("vrefs.workers", 0L)
+  if (w < 1L || !requireNamespace("mirai", quietly = TRUE)) return(lapply(x, f))
+  mirai::daemons(w)                       # spin up w background R processes
+  on.exit(mirai::daemons(0L), add = TRUE) # tear down
+  mirai::mirai_map(x, f)[]                # [] collects, preserves order
+}
+
+
 # ---- type + codec mapping --------------------------------------------------
 
 # VRT <DataType> -> numpy dtype string (OISST is little-endian)
@@ -414,15 +424,16 @@ virtualize_mosaic <- function(vrt, root, sources, record_size = 100000L) {
     # authoritative chunk shape is the HDF5 storage chunk, not the VRT BlockSize
     A$chunks <- if (zc$contiguous) A$shape else zc$chunks
 
-    parts <- list()
-    for (s in A$sources) {
-      row <- .match_source(s$filename, sources)          # join by $access
+    scan_one <- function(s) {
+      row <- .match_source(s$filename, sources)
       ci  <- scan_source_chunks(row$access, s$array, row$public, A, zc$contiguous)
-      shift <- s$dest %/% A$chunks                        # local -> global chunk coord
-      for (d in seq_along(A$chunks)) ci[[d]] <- ci[[d]] + shift[d]
-      parts[[length(parts) + 1L]] <- ci
+      shift <- s$dest %/% A$chunks                        # shift INSIDE the unit ->
+      for (d in seq_along(A$chunks)) ci[[d]] <- ci[[d]] + shift[d]  # globally-placed rows
+      ci
     }
+    parts <- .vmap(A$sources, scan_one)                   # serial or mirai, see below
     ref_tables[[nm]] <- do.call(rbind, parts)
+
     vars_meta[[nm]] <- list(shape = A$shape, chunks = A$chunks, dtype = A$dtype,
                             compressor = zc$compressor, filters = zc$filters,
                             fill_value = A$nodata, dim_names = A$dim_names,
