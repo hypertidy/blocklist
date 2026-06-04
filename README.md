@@ -1,6 +1,13 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
+<!-- badges: start -->
+
+[![CRAN
+status](https://www.r-pkg.org/badges/version/blocklist)](https://CRAN.R-project.org/package=blocklist)
+[![R-CMD-check](https://github.com/hypertidy/blocklist/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/hypertidy/blocklist/actions/workflows/R-CMD-check.yaml)
+<!-- badges: end -->
+
 # blocklist
 
 `blocklist` builds virtual **reference stores** from collections of
