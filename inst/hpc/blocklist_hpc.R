@@ -1,4 +1,5 @@
-## blocklist_hpc.R -- timing/debugging helpers for running blocklist on NCI/Pawsey.
+## -- timing/debugging helpers for running blocklist on NCI/Pawsey.
+## source(system.file("hpc/blocklist_hpc.R", package = "blocklist")) ## or
 ## source("https://raw.githubusercontent.com/hypertidy/blocklist/main/inst/hpc/blocklist_hpc.R")
 ## Each helper times a single layer so a slow run points at a stage, not a wall.
 ##
@@ -8,6 +9,10 @@
 ##   3. full scan of ONE file           -> run_one()
 ##   4. scan of N files                 -> run_n()
 ##   5. whole pipeline (mosaic+write)   -> run_all()
+
+suppressMessages({
+  library(blocklist, lib.loc = Sys.getenv("BLOCKLIST_LIB", "~/lib"))
+})
 
 ## ---- source table ----------------------------------------------------------
 ## Default = BRAN ocean_temp on NCI /g/data; override dir/var/url for elsewhere.
@@ -100,7 +105,7 @@ run_n <- function(src = bran_sources(), n = 10L,
 }
 
 ## ---- 5. whole thing (explicit paths, for qsub) -----------------------------
-run_all <- function(out, src = bran_sources(), vrt = tempfile(fileext = ".vrt")) {
+run_all <- function(out, src = bran_sources(), vrt =tempfile(fileext = ".vrt")) {
   message(sprintf("[run_all] %d sources -> %s", nrow(src), out))
   vrt <- build_vrt(src, vrt)
   tt <- system.time(virtualize_mosaic(vrt, out, sources = src))
