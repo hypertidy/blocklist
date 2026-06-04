@@ -441,7 +441,7 @@ virtualize_mosaic <- function(vrt, root, sources, record_size = 100000L) {
       ci
     }
     parts <- .vmap(A$sources, scan_one)
-    str(lapply(parts, function(p) if (inherits(p, "miraiError")) p else dim(p)))  # shapes / errors
+    #str(lapply(parts, function(p) if (inherits(p, "miraiError")) p else dim(p)))  # shapes / errors
     ref_tables[[nm]] <- do.call(rbind, parts)
     vars_meta[[nm]] <- list(shape = A$shape, chunks = A$chunks, dtype = A$dtype,
                             compressor = zc$compressor, filters = zc$filters,
