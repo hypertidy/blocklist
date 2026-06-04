@@ -194,7 +194,7 @@ mosaic_sources <- function(public, access = public) {
 }
 
 # ---- Per-source chunk scan (physical byte refs) ----------------------------
-# Wraps your fork's H5Dchunk_iter, whose return is:
+# Wraps fork's H5Dchunk_iter, whose return is:
 #   $offset      n_chunks x ndim matrix of chunk-grid coords (element units, C order)
 #   $addr        byte address of each chunk in the file
 #   $size        compressed byte length of each chunk
@@ -237,7 +237,7 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 
   fid <- H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"); did <- H5Dopen(fid, source_array)
   on.exit({ H5Dclose(did); H5Fclose(fid) }, add = TRUE)
-  ck <- rhdf5::H5Dchunk_iter(did)                               # <- your fork
+  ck <- rhdf5:::H5Dchunk_iter(did)                       
 
   # $offset: element-unit grid coords -> chunk-grid indices (divide by chunk shape)
   coords <- ck$offset
@@ -351,13 +351,15 @@ write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
     if (is_inline) {
       raw[[1L]] <- inline[[v]]$raw
     } else {
+
       df <- ref_tables[[v]]; ndim <- length(info$shape)
-      for (r in seq_len(nrow(df))) {
-        fi <- .flat_index(as.integer(df[r, seq_len(ndim)]), counts) + 1L  # chunk coord
-        path[fi] <- df$path[r]
-        offset[fi] <- as.double(df$offset[r])   # byte offset in the source file
-        size[fi]   <- as.double(df$size[r])
-      }
+      coords <- as.matrix(df[, seq_len(ndim), drop = FALSE])   # nrow x ndim, C order
+      stride <- rev(cumprod(rev(c(counts[-1], 1L))))           # length ndim
+      fi <- as.integer(coords %*% stride) + 1L                 # all flat indices at once
+      path[fi]   <- df$path
+      offset[fi] <- as.double(df$offset)
+      size[fi]   <- as.double(df$size)
+
     }
 
     vdir <- file.path(root, v); dir.create(vdir, recursive = TRUE)
