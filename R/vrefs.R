@@ -29,6 +29,7 @@
   w <- getOption("vrefs.workers", 0L)
   if (w < 1L || !requireNamespace("mirai", quietly = TRUE)) return(lapply(x, f))
   mirai::daemons(w)                       # spin up w background R processes
+  print(sprintf("daemons: %i", as.integer(i)))
   on.exit(mirai::daemons(0L), add = TRUE) # tear down
   mirai::mirai_map(x, f)[]                # [] collects, preserves order
 }
@@ -237,7 +238,7 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 
   fid <- H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"); did <- H5Dopen(fid, source_array)
   on.exit({ H5Dclose(did); H5Fclose(fid) }, add = TRUE)
-  ck <- rhdf5:::H5Dchunk_iter(did)                       
+  ck <- rhdf5:::H5Dchunk_iter(did)
 
   # $offset: element-unit grid coords -> chunk-grid indices (divide by chunk shape)
   coords <- ck$offset
