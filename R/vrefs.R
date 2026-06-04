@@ -30,6 +30,11 @@
   if (is.na(w)) w <- 1L
   if (w < 1L || !requireNamespace("mirai", quietly = TRUE)) return(lapply(x, f))
   mirai::daemons(w)                       # spin up w background R processes
+  mirai::everywhere({
+    .libPaths(Sys.getenv("VREFS_LIB", "~/lib"))
+    library(vrefs)
+    library(rhdf5)
+  })
   print(sprintf("daemons: %i", as.integer(w)))
   on.exit(mirai::daemons(0L), add = TRUE) # tear down
   mirai::mirai_map(x, f)[]                # [] collects, preserves order
@@ -435,9 +440,9 @@ virtualize_mosaic <- function(vrt, root, sources, record_size = 100000L) {
       for (d in seq_along(A$chunks)) ci[[d]] <- ci[[d]] + shift[d]  # globally-placed rows
       ci
     }
-    parts <- .vmap(A$sources, scan_one)                   # serial or mirai, see below
+    parts <- .vmap(A$sources, scan_one)
+    str(lapply(parts, function(p) if (inherits(p, "miraiError")) p else dim(p)))  # shapes / errors
     ref_tables[[nm]] <- do.call(rbind, parts)
-
     vars_meta[[nm]] <- list(shape = A$shape, chunks = A$chunks, dtype = A$dtype,
                             compressor = zc$compressor, filters = zc$filters,
                             fill_value = A$nodata, dim_names = A$dim_names,

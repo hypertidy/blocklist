@@ -18,6 +18,7 @@ Remotes: mdsumner/rhdf5@remote-chunk-refs
 Imports: 
     arrow,
     jsonlite,
+    mirai,
     rhdf5,
     xml2
 URL: https://github.com/mdsumner/vrefs
