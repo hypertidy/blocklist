@@ -341,13 +341,15 @@ write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
     if (is_inline) {
       raw[[1L]] <- inline[[v]]$raw
     } else {
+
       df <- ref_tables[[v]]; ndim <- length(info$shape)
-      for (r in seq_len(nrow(df))) {
-        fi <- .flat_index(as.integer(df[r, seq_len(ndim)]), counts) + 1L  # chunk coord
-        path[fi] <- df$path[r]
-        offset[fi] <- as.double(df$offset[r])   # byte offset in the source file
-        size[fi]   <- as.double(df$size[r])
-      }
+      coords <- as.matrix(df[, seq_len(ndim), drop = FALSE])   # nrow x ndim, C order
+      stride <- rev(cumprod(rev(c(counts[-1], 1L))))           # length ndim
+      fi <- as.integer(coords %*% stride) + 1L                 # all flat indices at once
+      path[fi]   <- df$path
+      offset[fi] <- as.double(df$offset)
+      size[fi]   <- as.double(df$size)
+
     }
 
     vdir <- file.path(root, v); dir.create(vdir, recursive = TRUE)
