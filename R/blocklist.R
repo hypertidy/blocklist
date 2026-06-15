@@ -180,16 +180,13 @@ mosaic_sources <- function(public, access = public) {
   did <- rhdf5::H5Dopen(fid, source_array)
   pid <- rhdf5::H5Dget_create_plist(did)
   on.exit({ rhdf5::H5Pclose(pid); H5Dclose(did); if (opened) H5Fclose(fid) }, add = TRUE)
-
   contiguous <- !identical(H5Pget_layout(pid), "H5D_CHUNKED")
-  chunks <- if (contiguous) NULL else H5Pget_chunk(pid)   # C order, authoritative
-
-  compressor <- NULL; filters <- list()
+  chunks <- if (contiguous) NULL else H5Pget_chunk(pid)
+  filters <- list()
   for (i in seq_len(H5Pget_nfilters(pid))) {
-    f <- H5Pget_filter(pid, i); id <- f[[1L]]             # (id, name); no cd_values
+    f <- H5Pget_filter(pid, i); id <- f[[1L]]
     if (id == .H5Z[["deflate"]]) {
-      compressor <- list(id = unbox("gzip"), level = unbox(1L))  # Zarr-spec id (GDAL + numcodecs);
-      # "zlib" is numcodecs-only. level decode-irrelevant.
+      filters[[length(filters) + 1L]] <- list(id = unbox("zlib"), level = unbox(1L))
     } else if (id == .H5Z[["shuffle"]]) {
       filters[[length(filters) + 1L]] <- list(id = unbox("shuffle"),
                                               elementsize = unbox(as.integer(itemsize)))
@@ -197,10 +194,9 @@ mosaic_sources <- function(public, access = public) {
       filters[[length(filters) + 1L]] <- list(id = unbox("fletcher32"))
     } else stop("unsupported HDF5 filter id ", id, " (", f[[2L]], ")")
   }
-  list(compressor = compressor, filters = if (length(filters)) filters else NULL,
+  list(compressor = NULL, filters = if (length(filters)) filters else NULL,
        contiguous = contiguous, chunks = chunks)
 }
-
 # ---- Per-source chunk scan (physical byte refs) ----------------------------
 # Wraps fork's H5Dchunk_iter, whose return is:
 #   $offset      n_chunks x ndim matrix of chunk-grid coords (element units, C order)
