@@ -277,7 +277,7 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 }
 
 .compose_data_attrs <- function(A) {
-  at <- list("_ARRAY_DIMENSIONS" = A$dim_names)
+  at <- list("_ARRAY_DIMENSIONS" = I(A$dim_names))
   if (!is.null(A$scale))  at[["scale_factor"]] <- unbox(A$scale)
   if (!is.null(A$offset)) at[["add_offset"]]   <- unbox(A$offset)
   if (!is.null(A$nodata)) at[["_FillValue"]]   <- unbox(A$nodata)
@@ -300,6 +300,19 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
   sum(coords * stride)
 }
 
+
+zarr_fill_value <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NULL)
+  x <- x[[1]]
+  if (is.numeric(x)) {
+    if (is.nan(x))      return(unbox("NaN"))                                # before is.na!
+    if (is.infinite(x)) return(unbox(if (x > 0) "Infinity" else "-Infinity"))
+    if (is.na(x))       return(NULL)                                        # true NA -> no fill
+  }
+  unbox(x)
+}
+
+as_zobject <- function(x) if (length(x)) x else setNames(list(), character(0))
 # ---- Write the kerchunk-Parquet store --------------------------------------
 
 #' Writes the fsspec `LazyReferenceMapper` layout (Zarr v2): a root `.zmetadata`
@@ -331,21 +344,21 @@ write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
   dir.create(root, recursive = TRUE)
 
   metadata <- list(".zgroup" = list(zarr_format = unbox(2L)),
-                   ".zattrs" = if (length(root_attrs)) root_attrs else setNames(list(), character(0)))
+                   ".zattrs" = as_zobject(root_attrs))
 
   for (v in names(vars_meta)) {
     info <- vars_meta[[v]]; is_inline <- v %in% names(inline)
     zarray <- list(
       zarr_format = unbox(2L),
-      shape  = as.integer(info$shape),
-      chunks = if (is_inline) as.integer(info$shape) else as.integer(info$chunks),
+      shape  = I(as.integer(info$shape)),
+      chunks = if (is_inline) I(as.integer(info$shape)) else I(as.integer(info$chunks)),
       dtype  = unbox(info$dtype),
       compressor = if (is_inline) NULL else info$compressor,
       filters    = if (is_inline) NULL else info$filters,
-      fill_value = if (is.null(info$fill_value)) NULL else unbox(info$fill_value),
+      fill_value = zarr_fill_value(info$fill_value),
       order = unbox("C"), dimension_separator = unbox("."))
     metadata[[paste0(v, "/.zarray")]] <- zarray
-    metadata[[paste0(v, "/.zattrs")]] <- info$attrs
+    metadata[[paste0(v, "/.zattrs")]] <- as_zobject(info$attrs)
 
     counts <- if (is_inline) rep(1L, length(info$shape))
     else as.integer(ceiling(info$shape / info$chunks))
@@ -383,7 +396,7 @@ write_kerchunk_parquet <- function(root, vars_meta, ref_tables,
     }
   }
   zmeta <- list(metadata = metadata, record_size = unbox(as.integer(record_size)))
-  writeLines(jsonlite::toJSON(zmeta, auto_unbox = FALSE, null = "null", na = "null"),
+  writeLines(jsonlite::toJSON(zmeta, auto_unbox = TRUE, null = "null", na = "null"),
              file.path(root, ".zmetadata"))
   invisible(root)
 }
@@ -450,7 +463,7 @@ virtualize_mosaic <- function(vrt, root, sources, record_size = 100000L) {
   # coordinates: values from the VRT (already composed), attrs from the rep file
   for (nm in names(m$coords)) {
     C <- m$coords[[nm]]
-    attrs <- c(list("_ARRAY_DIMENSIONS" = C$dim), .read_coord_attrs(rep_access, nm))
+    attrs <- c(list("_ARRAY_DIMENSIONS" = I(C$dim)), .read_coord_attrs(rep_access, nm))
     vars_meta[[nm]] <- list(shape = length(C$values), chunks = length(C$values),
                             dtype = C$dtype, compressor = NULL, filters = NULL,
                             fill_value = NULL, dim_names = C$dim, attrs = attrs)
