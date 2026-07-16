@@ -99,16 +99,25 @@ parse_mosaic_vrt <- function(vrt) {
       coords[[nm]] <- list(name = nm, dim = refs, dtype = dt, values = vals)
     } else {                                                     # data variable
       bs <- as.integer(strsplit(xml_text(xml_find_first(a, "./BlockSize")), ",")[[1]])
-      sources <- lapply(xml_find_all(a, "./Source"), function(s) {
-        fn <- xml_text(xml_find_first(s, "./SourceFilename"))
+      sources <- {
+        fns  <- xml_text(xml_find_all(a, "./Source/SourceFilename"))
+        arrs <- xml_text(xml_find_all(a, "./Source/SourceArray"))
+        offs <- xml_attr(xml_find_all(a, "./Source/DestSlab"), "offset")
+        # positional alignment relies on exactly one of each child per Source,
+        # which gdal mdim mosaic guarantees; guard anyway
+        stopifnot(length(arrs) == length(fns), length(offs) == length(fns))
+
         # GDAL may emit SourceFilename relative to the VRT; make it absolute
         # before any URL rewrite, else bare basenames leak into the refs.
-        if (!grepl("^(/|[a-z][a-z0-9+.-]*://)", fn))
-          fn <- normalizePath(file.path(dirname(vrt), fn), mustWork = FALSE)
-        list(filename = fn,
-             array = xml_text(xml_find_first(s, "./SourceArray")),
-             dest  = as.integer(strsplit(xml_attr(xml_find_first(s, "./DestSlab"), "offset"), ",")[[1]]))
-      })
+        rel <- !grepl("^(/|[a-z][a-z0-9+.-]*://)", fns)
+        if (any(rel))
+          fns[rel] <- normalizePath(file.path(dirname(vrt), fns[rel]), mustWork = FALSE)
+
+        dest <- lapply(strsplit(offs, ",", fixed = TRUE), as.integer)
+        mapply(function(f, ar, d) list(filename = f, array = ar, dest = d),
+               fns, arrs, dest, SIMPLIFY = FALSE, USE.NAMES = FALSE)
+      }
+
       arrays[[nm]] <- list(
         name = nm, dim_names = refs, dtype = dt,
         shape = as.integer(dim_size[refs]), chunks = bs,
