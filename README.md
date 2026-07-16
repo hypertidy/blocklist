@@ -1,6 +1,5 @@
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
-
 <!-- badges: start -->
 
 [![CRAN
@@ -28,10 +27,10 @@ enabling broader software language support and options for use.
   `source -> DestSlab` map saying which file supplies which slab. No
   data is read when generating the VRT.
 - **rhdf5 supplies the physical layer.** For each source array,
-  `H5Dchunk_iter` walks the HDF5 chunk index and returns each chunk’s
-  byte address and length (metadata only - chunk data is never read).
-  The codec and storage chunk shape come from the creation property list
-  (`H5Pget_filter`, `H5Pget_chunk`).
+  `h5getAllChunkInfo` walks the HDF5 chunk index and returns each
+  chunk’s byte address and length (metadata only - chunk data is never
+  read). The codec and storage chunk shape come from the creation
+  property list (`H5Pget_filter`, `H5Pget_chunk`).
 - **The store is kerchunk-Parquet.** A `.zmetadata` plus per-variable
   `refs.<N>.parq` shards - fsspec’s `LazyReferenceMapper` layout, Zarr
   v2. This *is* the portable sibling and the input to VirtualiZarr.
@@ -122,8 +121,8 @@ vds = open_virtual_dataset("oisst.zarr", parser=KerchunkParquetParser())
 - **Offsets are copy-invariant.** A chunk’s byte address is intrinsic to
   the HDF5 layout, so you can scan any copy and still reference the
   canonical URL.
-- **C order, everywhere.** `H5Pget_chunk` and `H5Dchunk_iter` return C
-  order; `h5ls()$dim` is *reversed* for R display (use `native = TRUE`
+- **C order, everywhere.** `H5Pget_chunk` and `h5getAllChunkInfo` return
+  C order; `h5ls()$dim` is *reversed* for R display (use `native = TRUE`
   to keep C order). Mixing the two scrambles the chunk-index maths
   silently.
 - **`gzip`, not `zlib`.** The Zarr-spec compressor id for DEFLATE is

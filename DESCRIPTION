@@ -15,7 +15,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
-Remotes: mdsumner/rhdf5@remote-chunk-refs
+Remotes: mdsumner/rhdf5@H5D-chunk-iter
 Imports: 
     arrow,
     jsonlite,

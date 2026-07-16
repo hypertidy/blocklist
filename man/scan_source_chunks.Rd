@@ -25,7 +25,7 @@ A \code{data.frame}, one row per chunk: \code{ndim} integer coordinate columns
 }
 \description{
 Opens \code{source_array} in \code{scan_path} read-only and walks its HDF5 chunk index
-(\code{H5Dchunk_iter}) to recover, per chunk, the grid coordinate (C order) and
+(\code{h5getAllChunkInfo}) to recover, per chunk, the grid coordinate (C order) and
 the byte address and length of the stored, compressed data. Coordinates are
 local to the source; the caller shifts them to global position using the
 mosaic \code{DestSlab} offset. A non-zero filter mask on any chunk aborts with an

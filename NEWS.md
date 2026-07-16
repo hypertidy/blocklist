@@ -13,7 +13,7 @@ Renamed and transferred from `vrefs` (mdsumner/vrefs) to `blocklist`
   `source -> DestSlab` mapping.
 
 * `scan_source_chunks()` walks the HDF5 chunk index of a single source file
-  via `rhdf5::H5Dchunk_iter`, returning block byte offsets and sizes as a
+  via `rhdf5::h5getAllChunkInfo`, returning block byte offsets and sizes as a
   flat table. Codec and storage chunk shape are read from the HDF5 creation
   property list.
 

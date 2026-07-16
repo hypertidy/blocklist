@@ -207,7 +207,7 @@ mosaic_sources <- function(public, access = public) {
        contiguous = contiguous, chunks = chunks)
 }
 # ---- Per-source chunk scan (physical byte refs) ----------------------------
-# Wraps fork's H5Dchunk_iter, whose return is:
+# Wraps fork's h5getAllChunkInfo, whose return is:
 #   $offset      n_chunks x ndim matrix of chunk-grid coords (element units, C order)
 #   $addr        byte address of each chunk in the file
 #   $size        compressed byte length of each chunk
@@ -219,7 +219,7 @@ mosaic_sources <- function(public, access = public) {
 #' Extract chunk byte references for one array in one source file
 #'
 #' Opens `source_array` in `scan_path` read-only and walks its HDF5 chunk index
-#' (`H5Dchunk_iter`) to recover, per chunk, the grid coordinate (C order) and
+#' (`h5getAllChunkInfo`) to recover, per chunk, the grid coordinate (C order) and
 #' the byte address and length of the stored, compressed data. Coordinates are
 #' local to the source; the caller shifts them to global position using the
 #' mosaic `DestSlab` offset. A non-zero filter mask on any chunk aborts with an
@@ -251,7 +251,7 @@ scan_source_chunks <- function(scan_path, source_array, ref_path, A, contiguous)
 
   fid <- H5Fopen(scan_path, flags = "H5F_ACC_RDONLY"); did <- H5Dopen(fid, source_array)
   on.exit({ H5Dclose(did); H5Fclose(fid) }, add = TRUE)
-  ck <- rhdf5:::H5Dchunk_iter(did)
+  ck <- rhdf5:::h5getAllChunkInfo(did)
 
   # $offset: element-unit grid coords -> chunk-grid indices (divide by chunk shape)
   coords <- ck$offset
